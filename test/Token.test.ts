@@ -31,7 +31,7 @@ describe('Token contract', () => {
             /* ASSERT */
             expect(await token.name()).to.equal(name);
             expect(await token.symbol()).to.equal(symbol);
-            expect(await token.owner()).to.equal(owner.address);
+            expect(await token.admin()).to.equal(owner.address);
         });
     });
 
@@ -67,7 +67,7 @@ describe('Token contract', () => {
             const promise = token.connect(addr1).executeTGE(vesting.target);
 
             /* ASSERT */
-            await expect(promise).to.be.revertedWithCustomError(token, "OwnableUnauthorizedAccount").withArgs(addr1.address);
+            await expect(promise).to.be.revertedWithCustomError(token, "AccessIsDenied()");
         });
     });
 });

@@ -3,13 +3,13 @@ pragma solidity ^0.8.23;
 
 import "@openzeppelin/contracts/token/ERC20/ERC20.sol";
 import "@openzeppelin/contracts/token/ERC20/extensions/ERC20Burnable.sol";
-import "@openzeppelin/contracts/access/Ownable.sol";
 
 /**
  * @title Token for distribution.
  */
-contract Token is ERC20, ERC20Burnable, Ownable {
+contract Token is ERC20, ERC20Burnable {
     error TGEExecuted();
+    error AccessIsDenied();
 
     /**
      * @notice The max amount of tokens.
@@ -21,6 +21,8 @@ contract Token is ERC20, ERC20Burnable, Ownable {
      */
     bool public isExecuted;
 
+    address public admin;
+
     /**
      * @notice Deployes contract.
      * @param name_ name of the token, as per ERC20.
@@ -31,17 +33,21 @@ contract Token is ERC20, ERC20Burnable, Ownable {
         string memory name_,
         string memory symbol_,
         address admin_
-    ) ERC20(name_, symbol_) Ownable(admin_) {}
+    ) ERC20(name_, symbol_) {
+        admin = admin_;
+    }
 
     /**
      * @notice Executes TGE, startes vesting.
      * @param _vesting The vesting contract address.
      */
-    function executeTGE(address _vesting) external onlyOwner {
+    function executeTGE(address _vesting) external {
+        if (admin != msg.sender) {
+            revert AccessIsDenied();
+        }
         if (isExecuted) {
             revert TGEExecuted();
         }
-
         isExecuted = true;
 
         _mint(_vesting, MAX_TOTAL_SUPPLY);

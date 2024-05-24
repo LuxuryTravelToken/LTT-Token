@@ -67,7 +67,7 @@ describe('Vesting contract', () => {
 
         it('should successfully deploy the contract with valid constructor parameters', async () => {
             /* ASSERT */
-            expect(await vesting.hasRole(await vesting.DEFAULT_ADMIN_ROLE(), owner.address)).to.true;
+            expect(owner.address).to.equal(await vesting.admin());
             expect(token.target).to.equal(await vesting.token());
         })
     });
@@ -86,6 +86,19 @@ describe('Vesting contract', () => {
             expect(await vesting.vestingStartTimestamp()).to.equal(await getLatestBlockTimestamp());
         });
 
+        it('rejects if already set', async () => {
+            /* EXECUTE */
+            await vesting.setVestingStartTimestamp();
+
+            /* ASSERT */
+            const promise = vesting.setVestingStartTimestamp();
+
+            /* ASSERT */
+            await expect(promise).to.be.revertedWithCustomError(vesting,
+                "VestingAlreadyStarted()"
+            );
+        });
+
         it('rejects if not default admin role', async () => {
             /* SETUP */
             const nonAdmin = addr1;
@@ -95,8 +108,7 @@ describe('Vesting contract', () => {
 
             /* ASSERT */
             await expect(promise).to.be.revertedWithCustomError(
-                vesting, "AccessControlUnauthorizedAccount"
-            ).withArgs(addr1.address, ethers.ZeroHash)
+                vesting, "AccessIsDenied()")
         });
     });
 
@@ -182,8 +194,7 @@ describe('Vesting contract', () => {
 
             /* ASSERT */
             await expect(promise).to.be.revertedWithCustomError(
-                vesting, "AccessControlUnauthorizedAccount"
-            ).withArgs(addr3.address, ethers.ZeroHash);
+                vesting, "AccessIsDenied()");
         });
     });
 
@@ -191,9 +202,22 @@ describe('Vesting contract', () => {
         beforeEach(async () => {
             vesting = await Vesting.deploy(token.target, owner.address);
             await token.executeTGE(vesting.target);
-
-
             await vesting.setVestingStartTimestamp();
+        });
+
+        it('distributes tokens if available amount is less than total amount', async () => {
+            // 1. 50% of tokens has been claimed by addr1
+            const accounts = [addr1.address];
+            let amounts = [totalSupply / 2n];
+            await vesting.connect(owner).setPublicRoundVestFor(accounts, amounts)
+            await vesting.connect(addr1).claim();
+
+            // 2. allocate 1 more token to addr1
+            amounts = [(totalSupply / 2n) + 1n];
+            await vesting.connect(owner).setPublicRoundVestFor(accounts, amounts)
+            await vesting.connect(addr1).claim();
+
+            expect(await token.balanceOf(addr1.address)).to.equal((totalSupply / 2n) + 1n);
         });
 
         it(`sets public round vest for successfully`, async () => {
@@ -363,8 +387,7 @@ describe('Vesting contract', () => {
 
             /* ASSERT */
             await expect(promise).to.be.revertedWithCustomError(
-                vesting, "AccessControlUnauthorizedAccount"
-            ).withArgs(addr1.address, ethers.ZeroHash);
+                vesting, "AccessIsDenied()");
         });
     });
 
@@ -547,8 +570,7 @@ describe('Vesting contract', () => {
 
             /* ASSERT */
             await expect(promise).to.be.revertedWithCustomError(
-                vesting, "AccessControlUnauthorizedAccount"
-            ).withArgs(addr1.address, ethers.ZeroHash);
+                vesting, "AccessIsDenied()");
         });
     });
 
@@ -730,8 +752,7 @@ describe('Vesting contract', () => {
 
             /* ASSERT */
             await expect(promise).to.be.revertedWithCustomError(
-                vesting, "AccessControlUnauthorizedAccount"
-            ).withArgs(addr1.address, ethers.ZeroHash);
+                vesting, "AccessIsDenied()");
         });
     });
 
@@ -914,8 +935,7 @@ describe('Vesting contract', () => {
 
             /* ASSERT */
             await expect(promise).to.be.revertedWithCustomError(
-                vesting, "AccessControlUnauthorizedAccount"
-            ).withArgs(addr1.address, ethers.ZeroHash);
+                vesting, "AccessIsDenied()");
         });
     });
 
@@ -1097,8 +1117,7 @@ describe('Vesting contract', () => {
 
             /* ASSERT */
             await expect(promise).to.be.revertedWithCustomError(
-                vesting, "AccessControlUnauthorizedAccount"
-            ).withArgs(addr1.address, ethers.ZeroHash);
+                vesting, "AccessIsDenied()");
         });
     });
 
@@ -1279,8 +1298,7 @@ describe('Vesting contract', () => {
 
             /* ASSERT */
             await expect(promise).to.be.revertedWithCustomError(
-                vesting, "AccessControlUnauthorizedAccount"
-            ).withArgs(addr1.address, ethers.ZeroHash);
+                vesting, "AccessIsDenied()");
         });
     });
 
@@ -1308,6 +1326,39 @@ describe('Vesting contract', () => {
 
             /* ASSERT */
             expect(await vesting.vestingTotalAmount()).to.equal(totalAmountAfter);
+        });
+
+        it('should set vestingTotalAmount correctly if multiple distributions', async () => {
+            const accounts = [addr1.address];
+
+            // 1st distribution
+            let amounts = [ethers.parseUnits("20000000000", 18)];
+            await vesting.connect(owner).setPublicRoundVestFor(accounts, amounts)
+
+            expect(await vesting.vestingTotalAmount()).to.equal(amounts[0]);
+
+            await vesting.connect(addr1).claim();
+            expect(await vesting.vestingTotalAmount()).to.equal(0);
+
+            // 2nd distribution
+            amounts = [ethers.parseUnits("40000000000", 18)];
+            await vesting.connect(owner).setPublicRoundVestFor(accounts, amounts)
+
+            const [, , claimedAmountA,] = await vesting.getTotalVestingInfo(accounts[0]);
+            expect(await vesting.vestingTotalAmount()).to.equal(amounts[0] - claimedAmountA);
+
+            await vesting.connect(addr1).claim();
+            expect(await vesting.vestingTotalAmount()).to.equal(0);
+
+            // 3rd distribution
+            amounts = [ethers.parseUnits("50000000000", 18)];
+            await vesting.connect(owner).setPublicRoundVestFor(accounts, amounts)
+
+            const [, , claimedAmountB,] = await vesting.getTotalVestingInfo(accounts[0]);
+            expect(await vesting.vestingTotalAmount()).to.equal(amounts[0] - claimedAmountB);
+
+            await vesting.connect(addr1).claim();
+            expect(await vesting.vestingTotalAmount()).to.equal(0);
         });
     });
 

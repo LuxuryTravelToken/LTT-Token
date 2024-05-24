@@ -3,12 +3,11 @@ pragma solidity ^0.8.23;
 
 import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
-import "@openzeppelin/contracts/access/AccessControl.sol";
 
 /**
  * @title Vesting to manage tokens between addresses and destinations.
  */
-contract Vesting is AccessControl {
+contract Vesting {
     using SafeERC20 for IERC20;
 
     enum Direction {
@@ -35,7 +34,9 @@ contract Vesting is AccessControl {
     error IncorrectAmount();
     error ZeroAddress();
     error NotStarted();
+    error VestingAlreadyStarted();
     error ForbiddenWithdrawalFromOwnContract();
+    error AccessIsDenied();
 
     /**
      * @notice The number of destinations that participate in the vesting.
@@ -46,6 +47,8 @@ contract Vesting is AccessControl {
      * @notice Token for distribution.
      */
     IERC20 public immutable token;
+
+    address public admin;
 
     /**
      * @notice Start date of vesting.
@@ -93,16 +96,26 @@ contract Vesting is AccessControl {
         uint8 direction
     );
 
+    modifier onlyAdmin() {
+        if (admin != msg.sender) {
+            revert AccessIsDenied();
+        }
+        _;
+    }
+
     constructor(address token_, address admin_) {
         token = IERC20(token_);
-        // Grants role to 'admin_'.
-        _grantRole(DEFAULT_ADMIN_ROLE, admin_);
+        admin = admin_;
     }
 
     /**
      * @notice Sets a vesting start timestamp.
      */
-    function setVestingStartTimestamp() external onlyRole(DEFAULT_ADMIN_ROLE) {
+    function setVestingStartTimestamp() external onlyAdmin {
+        if (vestingStartTimestamp != 0) {
+            revert VestingAlreadyStarted();
+        }
+
         vestingStartTimestamp = uint128(block.timestamp);
     }
 
@@ -114,7 +127,7 @@ contract Vesting is AccessControl {
     function setPublicRoundVestFor(
         address[] calldata _accounts,
         uint256[] calldata _amounts
-    ) external onlyRole(DEFAULT_ADMIN_ROLE) {
+    ) external onlyAdmin {
         _batchVestFor(_accounts, _amounts, 0, 0, uint8(Direction.PUBLIC_ROUND));
     }
 
@@ -126,7 +139,7 @@ contract Vesting is AccessControl {
     function setStakingVestFor(
         address[] calldata _accounts,
         uint256[] calldata _amounts
-    ) external onlyRole(DEFAULT_ADMIN_ROLE) {
+    ) external onlyAdmin {
         _batchVestFor(
             _accounts,
             _amounts,
@@ -144,7 +157,7 @@ contract Vesting is AccessControl {
     function setTeamVestFor(
         address[] calldata _accounts,
         uint256[] calldata _amounts
-    ) external onlyRole(DEFAULT_ADMIN_ROLE) {
+    ) external onlyAdmin {
         _batchVestFor(
             _accounts,
             _amounts,
@@ -162,7 +175,7 @@ contract Vesting is AccessControl {
     function setLiquidityVestFor(
         address[] calldata _accounts,
         uint256[] calldata _amounts
-    ) external onlyRole(DEFAULT_ADMIN_ROLE) {
+    ) external onlyAdmin {
         _batchVestFor(
             _accounts,
             _amounts,
@@ -180,7 +193,7 @@ contract Vesting is AccessControl {
     function setMarketingVestFor(
         address[] calldata _accounts,
         uint256[] calldata _amounts
-    ) external onlyRole(DEFAULT_ADMIN_ROLE) {
+    ) external onlyAdmin {
         _batchVestFor(
             _accounts,
             _amounts,
@@ -198,7 +211,7 @@ contract Vesting is AccessControl {
     function setTreasuryVestFor(
         address[] calldata _accounts,
         uint256[] calldata _amounts
-    ) external onlyRole(DEFAULT_ADMIN_ROLE) {
+    ) external onlyAdmin {
         _batchVestFor(
             _accounts,
             _amounts,
@@ -260,7 +273,7 @@ contract Vesting is AccessControl {
         address _token,
         address _to,
         uint256 _amount
-    ) external onlyRole(DEFAULT_ADMIN_ROLE) {
+    ) external onlyAdmin {
         if (_token == address(0)) {
             revert ZeroAddress();
         }
@@ -326,9 +339,6 @@ contract Vesting is AccessControl {
         if (vestingStartTimestamp == 0) {
             revert NotStarted();
         }
-        if (getAvailableAmount() < _amount) {
-            revert InsufficientTokens();
-        }
         if (_amount == 0) {
             revert IncorrectAmount();
         }
@@ -340,6 +350,13 @@ contract Vesting is AccessControl {
             .totalAmount;
         uint256 claimed = vestingSchedules[_account][_direction].claimed;
 
+        // Calculate the delta amount that needs to be additionally vested
+        uint256 deltaAmount = _amount > totalAmount ? _amount - totalAmount : 0;
+
+        if (getAvailableAmount() < deltaAmount) {
+            revert InsufficientTokens();
+        }
+
         if (totalAmount == 0) {
             // Current amount of tokens in vesting.
             vestingTotalAmount += _amount;
@@ -348,16 +365,12 @@ contract Vesting is AccessControl {
                 revert TotalAmountLessThanClaimed();
             }
 
-            // Current amount of tokens in vesting if totalAmount was modified.
-            vestingTotalAmount =
-                vestingTotalAmount -
-                (totalAmount - claimed) +
-                _amount;
+            // Adjust the total amount of tokens in vesting if totalAmount was modified.
+            vestingTotalAmount += _amount - totalAmount;
         }
         vestingSchedules[_account][_direction].cliffInSeconds = _cliff;
         vestingSchedules[_account][_direction].vestingInSeconds = _vesting;
         vestingSchedules[_account][_direction].totalAmount = _amount;
-        vestingSchedules[_account][_direction].claimed = claimed;
 
         emit VestingCreated(
             _account,
